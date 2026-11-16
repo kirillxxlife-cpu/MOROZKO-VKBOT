@@ -31,10 +31,7 @@ class Booking:
     address: str = ""
     phone: str = ""
     total: Decimal = Decimal("0")
-    promo_code: Optional[str] = None
     status: str = "draft"
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    paid_at: Optional[datetime] = None
 
 @dataclass
 class UserState:
@@ -43,7 +40,6 @@ class UserState:
     draft: dict = field(default_factory=dict)
     operator_mode: bool = False
     name: str = ""
-    operator_taken_by: Optional[int] = None
     ai_history: list = field(default_factory=list)
 
 _lock = asyncio.Lock()
@@ -70,17 +66,16 @@ def init_slots(days_ahead: int = 14) -> None:
 def mark_booked_from_sheets(rows: list[dict]) -> int:
     restored = 0
     for row in rows:
-        if row.get("status") != "paid": continue
         try:
-            d = date.fromisoformat(row["date"])
-            hh, mm = row["time"].split(":")
+            # Ожидаем формат даты ДД.ММ.ГГГГ из таблицы
+            d = datetime.strptime(row["Дата"], "%d.%m.%Y").date()
+            hh, mm = row["Время"].split(":")
             t = time(int(hh), int(mm))
-        except Exception: continue
+        except Exception:
+            continue
         for s in _slots.values():
             if s.date == d and s.time == t and s.status == SlotStatus.FREE:
                 s.status = SlotStatus.BOOKED
-                try: s.booking_id = uuid.UUID(row["booking_id"])
-                except Exception: pass
                 restored += 1
                 break
     return restored
@@ -139,20 +134,6 @@ async def confirm_booking(booking_id: uuid.UUID) -> bool:
         slot.status = SlotStatus.BOOKED
         slot.hold_until = None
         booking.status = "paid"
-        booking.paid_at = datetime.now(timezone.utc)
-        return True
-
-async def release_slot(booking_id: uuid.UUID) -> bool:
-    async with _lock:
-        booking = _bookings.get(booking_id)
-        if not booking or not booking.slot_id: return False
-        slot = _slots.get(booking.slot_id)
-        if not slot: return False
-        if slot.status == SlotStatus.BOOKED: return False
-        slot.status = SlotStatus.FREE
-        slot.hold_until = None
-        slot.booking_id = None
-        booking.status = "cancelled"
         return True
 
 def create_booking(vk_id: int, draft: dict) -> Booking:
@@ -166,17 +147,11 @@ def create_booking(vk_id: int, draft: dict) -> Booking:
     _bookings[b.id] = b
     return b
 
-def get_booking(bid: uuid.UUID) -> Optional[Booking]:
-    return _bookings.get(bid)
-
 def calc_total(draft: dict) -> Decimal:
     total = PACKAGE_PRICES.get(draft.get("package", ""), Decimal("0"))
     for e in draft.get("extras", []):
         total += EXTRA_PRICES.get(e, Decimal("0"))
     return total
-
-def make_friend_code(vk_id: int) -> str:
-    return f"FRIEND{vk_id % 1000000:06d}"
 
 async def cleanup_loop(interval_seconds: int = 60) -> None:
     while True:
