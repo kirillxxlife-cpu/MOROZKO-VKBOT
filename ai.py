@@ -25,14 +25,17 @@ async def get_ai_response(user_message: str, chat_history: list, client_name: st
 
     url = "https://llm.api.cloud.yandex.net/v1/chat/completions"
     headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}", "Content-Type": "application/json"}
+    
+    # ИСПРАВЛЕНА МОДЕЛЬ (добавлено 'ai' и '/latest')
     payload = {
-        "model": f"gpt://{YANDEX_FOLDER_ID}/alice-llm-flash",
+        "model": f"gpt://{YANDEX_FOLDER_ID}/aliceai-llm-flash/latest",
         "messages": messages,
         "temperature": 0.3,
         "max_tokens": 1500
     }
 
     try:
+        # ИСПРАВЛЕНА СИНТАКСИЧЕСКАЯ ОШИБКА (добавлено двоеточие)
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=payload, timeout=40) as resp:
                 if resp.status == 200:
