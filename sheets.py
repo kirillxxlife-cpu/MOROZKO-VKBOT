@@ -36,16 +36,14 @@ def is_enabled() -> bool:
 async def log_booking(b: dict) -> None:
     if not _sheet: return
     row = [
-        b.get("booking_id", ""), str(b.get("vk_id", "")), b.get("user_name", ""),
-        b.get("date", ""), b.get("time", ""), b.get("package", ""),
-        ",".join(b.get("extras", [])), b.get("child_name", ""), b.get("child_age", ""),
+        b.get("date", ""), b.get("time", ""), str(b.get("vk_id", "")), b.get("user_name", ""),
+        b.get("children", ""), b.get("package", ""), b.get("extras", ""), 
         b.get("address", ""), b.get("phone", ""), str(b.get("total", "")),
-        b.get("promo", "") or "", b.get("status", ""), b.get("created_at", ""), b.get("paid_at", "") or "",
     ]
     try:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: _sheet.append_row(row))
-        logger.info("Booking → Sheets: {}", b.get("booking_id"))
+        logger.info("Booking → Sheets: {}", b.get("vk_id"))
     except Exception as e:
         logger.error("Sheets log failed: {}", e)
 
