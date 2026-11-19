@@ -27,17 +27,6 @@ def kb_children_count() -> str:
     kb.add(Text("← Назад", payload={"cmd": "back_main"}), color=KeyboardButtonColor.SECONDARY)
     return kb.get_json()
 
-def kb_age() -> str:
-    kb = Keyboard(one_time=False, inline=False)
-    kb.add(Text("1–3 года", payload={"cmd": "age_1_3"}), color=KeyboardButtonColor.PRIMARY)
-    kb.row()
-    kb.add(Text("4–7 лет", payload={"cmd": "age_4_7"}), color=KeyboardButtonColor.PRIMARY)
-    kb.row()
-    kb.add(Text("8–12 лет", payload={"cmd": "age_8_12"}), color=KeyboardButtonColor.PRIMARY)
-    kb.row()
-    kb.add(Text("← Назад", payload={"cmd": "back_main"}), color=KeyboardButtonColor.SECONDARY)
-    return kb.get_json()
-
 def kb_package() -> str:
     kb = Keyboard(one_time=False, inline=False)
     kb.add(Text("🎁 Мини — 3 500 ₽", payload={"cmd": "pkg_mini"}), color=KeyboardButtonColor.SECONDARY)
@@ -62,6 +51,17 @@ def kb_extras(draft: dict) -> str:
     kb.add(Text("✅ Готово, выбрать дату", payload={"cmd": "extras_done"}), color=KeyboardButtonColor.POSITIVE)
     kb.row()
     kb.add(Text("← К пакетам", payload={"cmd": "back_package"}), color=KeyboardButtonColor.SECONDARY)
+    return kb.get_json()
+
+def kb_address() -> str:
+    kb = Keyboard(one_time=False, inline=False)
+    kb.add(Text("🏠 У нас дома", payload={"cmd": "loc_home"}), color=KeyboardButtonColor.PRIMARY)
+    kb.row()
+    kb.add(Text("🏡 На даче", payload={"cmd": "loc_dacha"}), color=KeyboardButtonColor.PRIMARY)
+    kb.row()
+    kb.add(Text("🎉 В кафе", payload={"cmd": "loc_cafe"}), color=KeyboardButtonColor.PRIMARY)
+    kb.row()
+    kb.add(Text("← Назад", payload={"cmd": "back_main"}), color=KeyboardButtonColor.SECONDARY)
     return kb.get_json()
 
 def kb_dates(dates_summary: list[dict]) -> str:
@@ -122,29 +122,25 @@ def kb_payment() -> str:
     kb.add(Text("✖ Отменить", payload={"cmd": "cancel"}), color=KeyboardButtonColor.NEGATIVE)
     return kb.get_json()
 
-def kb_after_paid(share_url: str, code: str) -> str:
+def kb_after_paid(share_url: str) -> str:
     kb = Keyboard(one_time=False, inline=False)
     kb.add(OpenLink(share_url, "📤 Поделиться с родными"), color=KeyboardButtonColor.POSITIVE)
-    kb.row()
-    kb.add(Text("🎁 Получить свой промокод", payload={"cmd": "show_my_code"}), color=KeyboardButtonColor.PRIMARY)
-    kb.row()
-    kb.add(Text("🏠 В главное меню", payload={"cmd": "back_main"}), color=KeyboardButtonColor.SECONDARY)
-    return kb.get_json()
-
-def kb_my_code(code: str) -> str:
-    kb = Keyboard(one_time=False, inline=False)
-    kb.add(Text("📋 Скопировать код", payload={"cmd": "copy_code"}), color=KeyboardButtonColor.PRIMARY)
     kb.row()
     kb.add(Text("🏠 В главное меню", payload={"cmd": "back_main"}), color=KeyboardButtonColor.SECONDARY)
     return kb.get_json()
 
 def kb_free_dates(dates_summary: list[dict]) -> str:
     kb = Keyboard(one_time=False, inline=False)
+    col = 0
     for item in dates_summary:
         if item["free"] > 0:
             d: date = item["date"]
             kb.add(Text(f"{d.day} {WD_RU[d.weekday()]} · {item['free']} окон", payload={"cmd": f"date_{d.isoformat()}"}), color=KeyboardButtonColor.PRIMARY)
-    kb.row()
+            col += 1
+            if col == 3:
+                kb.row()
+                col = 0
+    if col: kb.row()
     kb.add(Text("🎅 Забронировать", payload={"cmd": "book"}), color=KeyboardButtonColor.POSITIVE)
     kb.row()
     kb.add(Text("🏠 В меню", payload={"cmd": "back_main"}), color=KeyboardButtonColor.SECONDARY)
