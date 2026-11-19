@@ -27,19 +27,21 @@ if not VK_TOKEN:
 bot = Bot(token=VK_TOKEN)
 bot.labeler.vbml_ignore_case = True
 
-# --- Умная отправка с эффектом "печатает" и разбивкой на абзацы ---
 async def send_thinking(message: Message, text: str, keyboard: str = None):
     if not text: return
     parts = [p.strip() for p in text.split("\n\n") if p.strip()]
     if not parts: return
-    
-    for i, part in enumerate(parts):
-        await bot.api.messages.set_activity(type='typing', peer_id=message.peer_id)
-        delay = min(max(0.8, len(part) * 0.02), 2.5)
-        await asyncio.sleep(delay)
-        is_last = (i == len(parts) - 1)
-        kb_val = keyboard if is_last else None
-        await message.answer(part, keyboard=kb_val)
+    try:
+        for i, part in enumerate(parts):
+            await bot.api.messages.set_activity(type='typing', peer_id=message.peer_id)
+            delay = min(max(0.5, len(part) * 0.02), 2.0)
+            await asyncio.sleep(delay)
+            is_last = (i == len(parts) - 1)
+            kb_val = keyboard if is_last else None
+            await message.answer(part, keyboard=kb_val)
+    except Exception as e:
+        logger.error(f"Ошибка в send_thinking: {e}")
+        await message.answer("Извините, произошла техническая ошибка. Нажмите /start")
 
 def parse_payload(message: Message) -> str:
     p = getattr(message, "payload", None)
@@ -95,7 +97,7 @@ async def ask_child_info(message: Message, st: state.UserState):
     idx = st.draft.get("current_child_idx", 0)
     child_num = ["первого", "второго", "третьего", "четвёртого"][idx] if idx < 4 else f"{idx+1}-го"
     st.step = "child_name"
-    await send_thinking(message, texts.ASK_CHILD_INFO.format(child_num=child_num), keyboard=kb.kb_back_main())
+    await send_thinking(message, texts.ASK_CHILD_INFO.format(child_num=child_num), keyboard=kb.kb_main())
 
 async def step_package(message: Message, st: state.UserState):
     st.step = "package"
@@ -126,7 +128,7 @@ async def step_address(message: Message, st: state.UserState):
 
 async def step_phone(message: Message, st: state.UserState):
     st.step = "phone"
-    await send_thinking(message, texts.ASK_PHONE, keyboard=kb.kb_back_main())
+    await send_thinking(message, texts.ASK_PHONE, keyboard=kb.kb_main())
 
 async def step_review(message: Message, st: state.UserState):
     st.step = "review"
@@ -136,7 +138,7 @@ async def step_payment(message: Message, st: state.UserState):
     booking = state.create_booking(message.from_id, st.draft)
     slot = await state.hold_slot(booking.slot_id, booking.id, HOLD_MIN)
     if not slot:
-        await send_thinking(message, texts.SLOT_TAKEN, keyboard=kb.kb_back_main())
+        await send_thinking(message, texts.SLOT_TAKEN, keyboard=kb.kb_main())
         st.step = "main"
         return
     st.draft["booking_id"] = str(booking.id)
@@ -169,129 +171,136 @@ async def step_confirm_payment(message: Message, st: state.UserState):
 
 async def enter_operator(message: Message, st: state.UserState):
     st.operator_mode = True
-    await send_thinking(message, texts.OPERATOR_REQUESTED, keyboard=kb.kb_back_main())
+    await send_thinking(message, texts.OPERATOR_REQUESTED, keyboard=kb.kb_main())
     await notify_admin(texts.ADMIN_NEW_CLIENT.format(name=st.name or f"user_{st.vk_id}", vk_id=st.vk_id, snippet="Нажал «Живой человек»"))
 
 @bot.on.message()
 async def router(message: Message):
-    vk_id = message.from_id
-    st = state.get_user(vk_id)
-    if not st.name:
-        st.name = await safe_name(message)
+    try:
+        vk_id = message.from_id
+        st = state.get_user(vk_id)
+        if not st.name:
+            st.name = await safe_name(message)
 
-    text_raw = (message.text or "").strip()
-    cmd = parse_payload(message)
+        text_raw = (message.text or "").strip()
+        cmd = parse_payload(message)
 
-    if vk_id == ADMIN_VK_ID and text_raw.startswith("/"):
-        if text_raw.startswith("/take "):
-            uid = int(text_raw.split()[1]); s = state.get_user(uid); s.operator_mode = True
-            await message.answer(texts.ADMIN_TAKEN.format(vk_id=uid)); return
-        if text_raw.startswith("/release "):
-            uid = int(text_raw.split()[1]); s = state.get_user(uid); s.operator_mode = False
-            await message.answer(texts.ADMIN_RELEASED.format(vk_id=uid))
-            try: await bot.api.messages.send(user_id=uid, message=texts.OPERATOR_RETURNED, random_id=0, keyboard=kb.kb_main())
-            except: pass
+        if vk_id == ADMIN_VK_ID and text_raw.startswith("/"):
+            if text_raw.startswith("/take "):
+                uid = int(text_raw.split()[1]); s = state.get_user(uid); s.operator_mode = True
+                await message.answer(texts.ADMIN_TAKEN.format(vk_id=uid)); return
+            if text_raw.startswith("/release "):
+                uid = int(text_raw.split()[1]); s = state.get_user(uid); s.operator_mode = False
+                await message.answer(texts.ADMIN_RELEASED.format(vk_id=uid))
+                try: await bot.api.messages.send(user_id=uid, message=texts.OPERATOR_RETURNED, random_id=0, keyboard=kb.kb_main())
+                except: pass
+                return
+
+        if st.operator_mode:
+            await notify_admin(f"💬 {st.name} ({vk_id}):\n{text_raw[:500]}"); return
+
+        # --- Постоянные команды главного меню ---
+        if text_raw.lower().startswith("/start") or cmd == "book":
+            await step_welcome(message, st); return
+        if cmd == "free_dates":
+            st.step = "free_dates"
+            summary = state.get_dates_summary()
+            await send_thinking(message, texts.FREE_DATES_HEADER, keyboard=kb.kb_free_dates(summary)); return
+        if cmd == "operator":
+            await enter_operator(message, st); return
+
+        # --- Логика шагов ---
+        if cmd in ("loc_home", "loc_dacha", "loc_cafe") and st.step == "address":
+            loc_name = {"loc_home": "дома", "loc_dacha": "на даче", "loc_cafe": "в кафе"}[cmd]
+            await send_thinking(message, f"Отлично, {loc_name}! Теперь напишите точный адрес (улица, дом, квартира).", keyboard=kb.kb_main())
             return
 
-    if st.operator_mode:
-        await notify_admin(f"💬 {st.name} ({vk_id}):\n{text_raw[:500]}"); return
+        if st.step == "children_count" and not cmd:
+            t_low = text_raw.lower()
+            if t_low in ["1", "один", "одна", "одного", "одному"]: cmd = "children_1"
+            elif t_low in ["2", "два", "две", "двое", "двоих"]: cmd = "children_2"
+            elif t_low in ["3", "три", "трое", "троих"]: cmd = "children_3"
+            elif t_low in ["4", "четыре", "четверо", "больше", "много"]: cmd = "children_4"
+            else:
+                await send_thinking(message, "Выберите количество кнопкой ниже 👇", keyboard=kb.kb_children_count()); return
 
-    if text_raw.lower().startswith("/start"):
-        await step_welcome(message, st); return
+        if st.step == "child_name" and not cmd:
+            st.draft["children"].append(text_raw)
+            st.draft["current_child_idx"] += 1
+            if st.draft["current_child_idx"] < st.draft.get("target_children_count", 1):
+                await ask_child_info(message, st)
+            else:
+                await step_package(message, st)
+            return
 
-    # --- Выбор адреса (кнопки) ---
-    if cmd in ("loc_home", "loc_dacha", "loc_cafe") and st.step == "address":
-        loc_name = {"loc_home": "дома", "loc_dacha": "на даче", "loc_cafe": "в кафе"}[cmd]
-        await send_thinking(message, f"Отлично, {loc_name}! Теперь напишите точный адрес (улица, дом, квартира).", keyboard=kb.kb_back_main())
-        return
+        if st.step == "address" and not cmd:
+            st.draft["address"] = text_raw
+            await step_phone(message, st); return
 
-    if st.step == "children_count" and not cmd:
-        t_low = text_raw.lower()
-        if t_low in ["1", "один", "одна", "одного", "одному"]: cmd = "children_1"
-        elif t_low in ["2", "два", "две", "двое", "двоих"]: cmd = "children_2"
-        elif t_low in ["3", "три", "трое", "троих"]: cmd = "children_3"
-        elif t_low in ["4", "четыре", "четверо", "больше", "много"]: cmd = "children_4"
-        else:
-            await send_thinking(message, "Выберите количество кнопкой ниже 👇", keyboard=kb.kb_children_count()); return
+        if st.step == "phone" and not cmd:
+            digits = re.sub(r"\D", "", text_raw)
+            if len(digits) < 10:
+                await send_thinking(message, texts.BAD_PHONE, keyboard=kb.kb_main()); return
+            st.draft["phone"] = text_raw
+            await step_review(message, st); return
 
-    if st.step == "child_name" and not cmd:
-        st.draft["children"].append(text_raw)
-        st.draft["current_child_idx"] += 1
-        if st.draft["current_child_idx"] < st.draft.get("target_children_count", 1):
-            await ask_child_info(message, st)
-        else:
-            await step_package(message, st)
-        return
+        if cmd.startswith("children_"):
+            count = 4 if cmd.split("_")[1] == "4" else int(cmd.split("_")[1])
+            st.draft["target_children_count"] = count
+            st.draft["current_child_idx"] = 0
+            await ask_child_info(message, st); return
+        if cmd in ("pkg_mini", "pkg_standard", "pkg_premium"):
+            st.draft["package"] = cmd.split("_", 1)[1]; st.draft["extras"] = []
+            await step_extras(message, st); return
+        if cmd in ("extra_photo", "extra_cake", "extra_balls"):
+            key = cmd.split("_", 1)[1]; chosen = set(st.draft.get("extras", []))
+            chosen.symmetric_difference_update({key}); st.draft["extras"] = list(chosen)
+            await send_thinking(message, "Отмечено.", keyboard=kb.kb_extras(st.draft)); return
+        if cmd == "extras_done": await step_dates(message, st); return
+        if cmd.startswith("date_"):
+            await step_times(message, st, date.fromisoformat(cmd[5:])); return
+        if cmd.startswith("slot_"):
+            slot_id = int(cmd[5:]); slots = state.get_free_slots_by_date(date.fromisoformat(st.draft["date"]))
+            slot = next((s for s in slots if s.id == slot_id), None)
+            if not slot or slot.status.value != "free":
+                await send_thinking(message, texts.SLOT_TAKEN, keyboard=kb.kb_times(slots)); return
+            st.draft["slot_id"] = slot_id; st.draft["time_display"] = slot.time.strftime("%H:%M")
+            await step_address(message, st); return
 
-    if st.step == "address" and not cmd:
-        st.draft["address"] = text_raw
-        await step_phone(message, st); return
+        if cmd == "review_ok":
+            st.step = "consent"; await send_thinking(message, texts.CONSENT, keyboard=kb.kb_consent()); return
+        if cmd == "review_edit": await step_children_count(message, st); return
+        if cmd == "review_back": await step_review(message, st); return
+        if cmd == "consent_yes": await step_payment(message, st); return
+        if cmd == "pay_now":
+            await send_thinking(message, "✅ Оплата получена")
+            await asyncio.sleep(0.4)
+            await step_confirm_payment(message, st); return
+        if cmd == "cancel":
+            if st.draft.get("booking_id"): await state.release_slot(uuid.UUID(st.draft["booking_id"]))
+            await send_thinking(message, texts.CANCEL, keyboard=kb.kb_welcome()); st.draft = {}; st.step = "main"; return
+        if cmd == "back_main": await step_welcome(message, st); return
+        if cmd == "noop": await send_thinking(message, texts.NOOP, keyboard=kb.kb_main()); return
 
-    if st.step == "phone" and not cmd:
-        digits = re.sub(r"\D", "", text_raw)
-        if len(digits) < 10:
-            await send_thinking(message, texts.BAD_PHONE, keyboard=kb.kb_back_main()); return
-        st.draft["phone"] = text_raw
-        await step_review(message, st); return
+        # --- AI Ответ ---
+        if not cmd and text_raw:
+            ai_response = await ai.get_ai_response(text_raw, st.ai_history, st.name, st.step)
 
-    if cmd == "book": await step_children_count(message, st); return
-    if cmd.startswith("children_"):
-        count = 4 if cmd.split("_")[1] == "4" else int(cmd.split("_")[1])
-        st.draft["target_children_count"] = count
-        st.draft["current_child_idx"] = 0
-        await ask_child_info(message, st); return
-    if cmd in ("pkg_mini", "pkg_standard", "pkg_premium"):
-        st.draft["package"] = cmd.split("_", 1)[1]; st.draft["extras"] = []
-        await step_extras(message, st); return
-    if cmd in ("extra_photo", "extra_cake", "extra_balls"):
-        key = cmd.split("_", 1)[1]; chosen = set(st.draft.get("extras", []))
-        chosen.symmetric_difference_update({key}); st.draft["extras"] = list(chosen)
-        await send_thinking(message, "Отмечено.", keyboard=kb.kb_extras(st.draft)); return
-    if cmd == "extras_done": await step_dates(message, st); return
-    if cmd.startswith("date_"):
-        await step_times(message, st, date.fromisoformat(cmd[5:])); return
-    if cmd.startswith("slot_"):
-        slot_id = int(cmd[5:]); slots = state.get_free_slots_by_date(date.fromisoformat(st.draft["date"]))
-        slot = next((s for s in slots if s.id == slot_id), None)
-        if not slot or slot.status.value != "free":
-            await send_thinking(message, texts.SLOT_TAKEN, keyboard=kb.kb_times(slots)); return
-        st.draft["slot_id"] = slot_id; st.draft["time_display"] = slot.time.strftime("%H:%M")
-        await step_address(message, st); return
+            if "[ПЕРЕДАТЬ_ОПЕРАТОРУ]" in ai_response:
+                clean_response = ai_response.replace("[ПЕРЕДАТЬ_ОПЕРАТОРУ]", "").strip()
+                await send_thinking(message, clean_response, keyboard=kb.kb_main())
+                await notify_admin(f"🚨 Требуется оператор!\n👤 {st.name} (vk.com/id{st.vk_id})\n💬 {text_raw[:200]}...")
+                st.operator_mode = True; return
 
-    if cmd == "review_ok":
-        st.step = "consent"; await send_thinking(message, texts.CONSENT, keyboard=kb.kb_consent()); return
-    if cmd == "review_edit": await step_children_count(message, st); return
-    if cmd == "review_back": await step_review(message, st); return
-    if cmd == "consent_yes": await step_payment(message, st); return
-    if cmd == "pay_now":
-        await send_thinking(message, "✅ Оплата получена")
-        await asyncio.sleep(0.4)
-        await step_confirm_payment(message, st); return
-    if cmd == "cancel":
-        if st.draft.get("booking_id"): await state.release_slot(uuid.UUID(st.draft["booking_id"]))
-        await send_thinking(message, texts.CANCEL, keyboard=kb.kb_welcome()); st.draft = {}; st.step = "main"; return
-    if cmd == "back_main": await step_welcome(message, st); return
-    if cmd == "free_dates":
-        st.step = "free_dates"
-        summary = state.get_dates_summary()
-        await send_thinking(message, texts.FREE_DATES_HEADER, keyboard=kb.kb_free_dates(summary)); return
-    if cmd == "operator": await enter_operator(message, st); return
-    if cmd == "noop": await send_thinking(message, texts.NOOP, keyboard=kb.kb_back_main()); return
+            st.ai_history.extend([{"role": "user", "text": text_raw}, {"role": "assistant", "text": ai_response}])
+            st.ai_history = st.ai_history[-10:]
+            await send_thinking(message, ai_response, keyboard=kb.kb_main()); return
 
-    if not cmd and text_raw:
-        ai_response = await ai.get_ai_response(text_raw, st.ai_history, st.name, st.step)
+        await send_thinking(message, "Пожалуйста, выберите вариант на клавиатуре ниже 👇", keyboard=kb.kb_main())
 
-        if "[ПЕРЕДАТЬ_ОПЕРАТОРУ]" in ai_response:
-            clean_response = ai_response.replace("[ПЕРЕДАТЬ_ОПЕРАТОРУ]", "").strip()
-            await send_thinking(message, clean_response, keyboard=kb.kb_back_main())
-            await notify_admin(f"🚨 Требуется оператор!\n👤 {st.name} (vk.com/id{st.vk_id})\n💬 {text_raw[:200]}...")
-            st.operator_mode = True; return
-
-        st.ai_history.extend([{"role": "user", "text": text_raw}, {"role": "assistant", "text": ai_response}])
-        st.ai_history = st.ai_history[-10:]
-        await send_thinking(message, ai_response, keyboard=kb.kb_back_main()); return
-
-    await send_thinking(message, "Пожалуйста, выберите вариант на клавиатуре ниже 👇")
+    except Exception as e:
+        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА В РОУТЕРЕ: {e}")
+        await message.answer("Упс, что-то пошло не так. Пожалуйста, нажмите /start для перезапуска.")
 
 async def main():
     state.init_slots()
