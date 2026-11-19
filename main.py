@@ -71,11 +71,11 @@ def build_review_text(st: state.UserState) -> str:
     children_str = ", ".join(d.get("children", []))
     total = state.calc_total(d)
     lines = [
-        texts.REVIEW_HEADER, f"👦 {children_str}",
+        f"👦 {children_str}",
         f"📅 {d.get('date_display', '')} в {d.get('time_display', '')}",
         f"🎁 {state.PACKAGE_NAMES.get(d.get('package', ''), '')}",
         f"➕ {extras}", f"📍 {d.get('address', '')}", f"📞 {d.get('phone', '')}",
-        f"💰 {int(total)} ₽", texts.REVIEW_GUARANTEE,
+        f"💰 {int(total)} ₽"
     ]
     return "\n".join(lines)
 
@@ -86,22 +86,26 @@ def share_url_for(vk_id: int) -> str:
 async def step_welcome(message: Message, st: state.UserState):
     st.step = "main"
     st.draft = {}
-    await send_thinking(message, texts.WELCOME, keyboard=kb.kb_welcome())
+    await send_thinking(message, texts.WELCOME.format(name=st.name), keyboard=kb.kb_welcome())
 
 async def step_children_count(message: Message, st: state.UserState):
     st.step = "children_count"
     st.draft = {"children": [], "current_child_idx": 0}
-    await send_thinking(message, texts.ASK_CHILDREN_COUNT, keyboard=kb.kb_children_count())
+    await send_thinking(message, texts.ASK_CHILDREN_COUNT.format(name=st.name), keyboard=kb.kb_children_count())
 
 async def ask_child_info(message: Message, st: state.UserState):
     idx = st.draft.get("current_child_idx", 0)
     child_num = ["первого", "второго", "третьего", "четвёртого"][idx] if idx < 4 else f"{idx+1}-го"
+    emojis = ["🎈", "🎁", "🎄", "⭐"]
+    emoji = emojis[idx % len(emojis)]
     st.step = "child_name"
-    await send_thinking(message, texts.ASK_CHILD_INFO.format(child_num=child_num), keyboard=kb.kb_main())
+    await send_thinking(message, texts.ASK_CHILD_INFO.format(child_num=child_num, child_emoji=emoji), keyboard=kb.kb_main())
 
 async def step_package(message: Message, st: state.UserState):
     st.step = "package"
-    await send_thinking(message, texts.ASK_PACKAGE, keyboard=kb.kb_package())
+    count = len(st.draft.get("children", []))
+    ages = ", ".join(st.draft.get("children", []))
+    await send_thinking(message, texts.ASK_PACKAGE.format(children_count=count, ages_summary=ages), keyboard=kb.kb_package())
 
 async def step_extras(message: Message, st: state.UserState):
     st.step = "extras"
@@ -120,30 +124,32 @@ async def step_times(message: Message, st: state.UserState, d: date):
     if not any(s.status.value == "free" for s in slots):
         await send_thinking(message, texts.NO_SLOTS_LEFT, keyboard=kb.kb_dates(state.get_dates_summary()))
         return
-    await send_thinking(message, texts.ASK_TIME.format(date=d.strftime("%d.%m.%Y")), keyboard=kb.kb_times(slots))
+    await send_thinking(message, texts.ASK_TIME.format(name=st.name, date=d.strftime("%d.%m.%Y")), keyboard=kb.kb_times(slots))
 
 async def step_address(message: Message, st: state.UserState):
     st.step = "address"
-    await send_thinking(message, texts.ASK_ADDRESS, keyboard=kb.kb_address())
+    await send_thinking(message, texts.ASK_ADDRESS.format(name=st.name), keyboard=kb.kb_address())
 
 async def step_phone(message: Message, st: state.UserState):
     st.step = "phone"
-    await send_thinking(message, texts.ASK_PHONE, keyboard=kb.kb_main())
+    await send_thinking(message, texts.ASK_PHONE.format(name=st.name), keyboard=kb.kb_main())
 
 async def step_review(message: Message, st: state.UserState):
     st.step = "review"
-    await send_thinking(message, build_review_text(st), keyboard=kb.kb_review())
+    header = texts.REVIEW_HEADER.format(name=st.name)
+    full_text = header + "\n" + build_review_text(st) + "\n" + texts.REVIEW_GUARANTEE
+    await send_thinking(message, full_text, keyboard=kb.kb_review())
 
 async def step_payment(message: Message, st: state.UserState):
     booking = state.create_booking(message.from_id, st.draft)
     slot = await state.hold_slot(booking.slot_id, booking.id, HOLD_MIN)
     if not slot:
-        await send_thinking(message, texts.SLOT_TAKEN, keyboard=kb.kb_main())
+        await send_thinking(message, texts.SLOT_TAKEN.format(name=st.name), keyboard=kb.kb_main())
         st.step = "main"
         return
     st.draft["booking_id"] = str(booking.id)
     st.step = "payment"
-    await send_thinking(message, texts.PAYMENT_SCREEN, keyboard=kb.kb_payment())
+    await send_thinking(message, texts.PAYMENT_SCREEN.format(name=st.name), keyboard=kb.kb_payment())
 
 async def step_confirm_payment(message: Message, st: state.UserState):
     bid_str = st.draft.get("booking_id")
@@ -163,16 +169,15 @@ async def step_confirm_payment(message: Message, st: state.UserState):
         "total": str(state.calc_total(d))
     }))
 
-    paid_text = texts.PAID_HEADER + texts.PAID_BODY.format(
-        date=d.get("date_display", ""), time=d.get("time_display", ""), children=children_names
-    )
-    await send_thinking(message, paid_text, keyboard=kb.kb_after_paid(share_url_for(message.from_id)))
+    paid_header = texts.PAID_HEADER.format(name=st.name)
+    paid_body = texts.PAID_BODY.format(date=d.get("date_display", ""), time=d.get("time_display", ""), children=children_names)
+    await send_thinking(message, paid_header + "\n\n" + paid_body, keyboard=kb.kb_after_paid(share_url_for(message.from_id)))
     st.step = "done"
 
 async def enter_operator(message: Message, st: state.UserState):
     st.operator_mode = True
-    await send_thinking(message, texts.OPERATOR_REQUESTED, keyboard=kb.kb_main())
-    await notify_admin(texts.ADMIN_NEW_CLIENT.format(name=st.name or f"user_{st.vk_id}", vk_id=st.vk_id, snippet="Нажал «Живой человек»"))
+    await send_thinking(message, texts.OPERATOR_REQUESTED.format(name=st.name), keyboard=kb.kb_main())
+    await notify_admin(texts.ADMIN_NEW_CLIENT.format(name=st.name or f"user_{st.vk_id}", vk_id=st.vk_id, snippet="Нажал «Живой человек»", funnel_stage=st.step))
 
 @bot.on.message()
 async def router(message: Message):
@@ -192,16 +197,18 @@ async def router(message: Message):
             if text_raw.startswith("/release "):
                 uid = int(text_raw.split()[1]); s = state.get_user(uid); s.operator_mode = False
                 await message.answer(texts.ADMIN_RELEASED.format(vk_id=uid))
-                try: await bot.api.messages.send(user_id=uid, message=texts.OPERATOR_RETURNED, random_id=0, keyboard=kb.kb_main())
+                try: await bot.api.messages.send(user_id=uid, message=texts.OPERATOR_RETURNED.format(name=s.name), random_id=0, keyboard=kb.kb_main())
                 except: pass
                 return
 
         if st.operator_mode:
             await notify_admin(f"💬 {st.name} ({vk_id}):\n{text_raw[:500]}"); return
 
-        # --- Постоянные команды главного меню ---
-        if text_raw.lower().startswith("/start") or cmd == "book":
+        # --- Постоянные команды ---
+        if text_raw.lower().startswith("/start"):
             await step_welcome(message, st); return
+        if cmd == "book": 
+            await step_children_count(message, st); return
         if cmd == "free_dates":
             st.step = "free_dates"
             summary = state.get_dates_summary()
@@ -240,7 +247,7 @@ async def router(message: Message):
         if st.step == "phone" and not cmd:
             digits = re.sub(r"\D", "", text_raw)
             if len(digits) < 10:
-                await send_thinking(message, texts.BAD_PHONE, keyboard=kb.kb_main()); return
+                await send_thinking(message, texts.BAD_PHONE.format(name=st.name), keyboard=kb.kb_main()); return
             st.draft["phone"] = text_raw
             await step_review(message, st); return
 
@@ -263,12 +270,12 @@ async def router(message: Message):
             slot_id = int(cmd[5:]); slots = state.get_free_slots_by_date(date.fromisoformat(st.draft["date"]))
             slot = next((s for s in slots if s.id == slot_id), None)
             if not slot or slot.status.value != "free":
-                await send_thinking(message, texts.SLOT_TAKEN, keyboard=kb.kb_times(slots)); return
+                await send_thinking(message, texts.SLOT_TAKEN.format(name=st.name), keyboard=kb.kb_times(slots)); return
             st.draft["slot_id"] = slot_id; st.draft["time_display"] = slot.time.strftime("%H:%M")
             await step_address(message, st); return
 
         if cmd == "review_ok":
-            st.step = "consent"; await send_thinking(message, texts.CONSENT, keyboard=kb.kb_consent()); return
+            st.step = "consent"; await send_thinking(message, texts.CONSENT.format(name=st.name), keyboard=kb.kb_consent()); return
         if cmd == "review_edit": await step_children_count(message, st); return
         if cmd == "review_back": await step_review(message, st); return
         if cmd == "consent_yes": await step_payment(message, st); return
@@ -278,7 +285,7 @@ async def router(message: Message):
             await step_confirm_payment(message, st); return
         if cmd == "cancel":
             if st.draft.get("booking_id"): await state.release_slot(uuid.UUID(st.draft["booking_id"]))
-            await send_thinking(message, texts.CANCEL, keyboard=kb.kb_welcome()); st.draft = {}; st.step = "main"; return
+            await send_thinking(message, texts.CANCEL.format(name=st.name), keyboard=kb.kb_welcome()); st.draft = {}; st.step = "main"; return
         if cmd == "back_main": await step_welcome(message, st); return
         if cmd == "noop": await send_thinking(message, texts.NOOP, keyboard=kb.kb_main()); return
 
