@@ -6,15 +6,15 @@ WD_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 def add_main_menu(kb: Keyboard) -> Keyboard:
     kb.row()
-    kb.add(Text("🎅 Забронировать", payload={"cmd": "book"}), color=KeyboardButtonColor.PRIMARY)
-    kb.row()
     kb.add(Text("📅 Свободные даты", payload={"cmd": "free_dates"}), color=KeyboardButtonColor.SECONDARY)
     kb.row()
     kb.add(Text("👤 Живой человек", payload={"cmd": "operator"}), color=KeyboardButtonColor.NEGATIVE)
     return kb
 
 def kb_main() -> str:
-    return add_main_menu(Keyboard(one_time=False, inline=False)).get_json()
+    kb = Keyboard(one_time=False, inline=False)
+    kb.add(Text("🎅 Забронировать", payload={"cmd": "book"}), color=KeyboardButtonColor.PRIMARY)
+    return add_main_menu(kb).get_json()
 
 def kb_welcome() -> str: return kb_main()
 
@@ -95,4 +95,18 @@ def kb_payment() -> str:
 def kb_after_paid(share_url: str) -> str:
     kb = Keyboard(one_time=False, inline=False)
     kb.add(OpenLink(share_url, "📤 Поделиться с родными"), color=KeyboardButtonColor.POSITIVE)
+    return add_main_menu(kb).get_json()
+
+def kb_free_dates(dates_summary: list[dict]) -> str:
+    kb = Keyboard(one_time=False, inline=False)
+    col, count = 0, 0
+    for item in dates_summary:
+        if item["free"] > 0:
+            if count >= 9: break
+            d: date = item["date"]
+            kb.add(Text(f"{d.day} {WD_RU[d.weekday()]} · {item['free']} окон", payload={"cmd": f"date_{d.isoformat()}"}), color=KeyboardButtonColor.SECONDARY)
+            col += 1; count += 1
+            if col == 3:
+                kb.row(); col = 0
+    if col: kb.row()
     return add_main_menu(kb).get_json()
