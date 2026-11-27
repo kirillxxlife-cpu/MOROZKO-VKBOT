@@ -37,13 +37,12 @@ async def log_booking(b: dict) -> None:
     if not _sheet: return
     row = [
         b.get("date", ""), b.get("time", ""), str(b.get("vk_id", "")), b.get("user_name", ""),
-        b.get("children", ""), b.get("package", ""), b.get("extras", ""), 
-        b.get("address", ""), b.get("phone", ""), str(b.get("total", "")),
+        b.get("city", ""), b.get("audience", ""), b.get("address", ""), b.get("phone", ""),
+        b.get("children", ""), b.get("package", ""), b.get("extras", ""), str(b.get("total", ""))
     ]
     try:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: _sheet.append_row(row))
-        logger.info("Booking → Sheets: {}", b.get("vk_id"))
     except Exception as e:
         logger.error("Sheets log failed: {}", e)
 
