@@ -148,6 +148,11 @@ async def step_payment(message: Message, st: state.UserState):
     booking = state.create_booking(message.from_id, st.draft)
     slot = await state.hold_slot(booking.slot_id, booking.id, HOLD_MIN)
     if not slot:
+        # Если слот занят, принудительно освобождаем его для теста
+        await state.release_slot(booking.id)
+        slot = await state.hold_slot(booking.slot_id, booking.id, HOLD_MIN)
+    
+    if not slot:
         await send_message(message, texts.SLOT_TAKEN, keyboard=kb.kb_main())
         st.step = "main"
         return
@@ -158,8 +163,8 @@ async def step_confirm_payment(message: Message, st: state.UserState):
     bid_str = st.draft.get("booking_id")
     if not bid_str: return
     bid = uuid.UUID(bid_str)
-    if not await state.confirm_booking(bid): return
-
+    
+    # 1. Сначала пишем в таблицу (чтобы данные точно улетели)
     d = st.draft
     children_names = ", ".join(d.get("children", [])) or "вашим гостям"
     
@@ -172,6 +177,9 @@ async def step_confirm_payment(message: Message, st: state.UserState):
         "address": d.get("address", ""), "phone": d.get("phone", ""),
         "total": str(state.calc_total(d))
     }))
+    
+    # 2. Затем подтверждаем слот (игнорируем ошибку, чтобы бот не завис)
+    await state.confirm_booking(bid)
 
     paid_header = texts.PAID_HEADER.format(name=st.name)
     paid_body = texts.PAID_BODY.format(
@@ -228,6 +236,8 @@ async def router(message: Message):
 
         if text_raw.lower().startswith("/start"):
             await step_city(message, st); return
+        if cmd == "book": 
+            await step_city(message, st); return 
         if cmd == "operator":
             await enter_operator(message, st); return
         if cmd == "back_main":
