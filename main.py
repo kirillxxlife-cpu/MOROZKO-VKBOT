@@ -30,7 +30,6 @@ bot.labeler.vbml_ignore_case = True
 
 PDF_GUIDE_URL = "https://disk.yandex.ru/i/skazka_guide_pdf"
 
-# --- Только отправка, без сложных разбивок ---
 async def send_message(message: Message, text: str, keyboard: str = None):
     if not text: return
     try:
@@ -62,7 +61,6 @@ async def notify_admin(text: str) -> None:
     except Exception as e:
         logger.error("admin notify: {}", e)
 
-# --- Сборка карточки ---
 def build_review_text(st: state.UserState) -> str:
     d = st.draft
     extras = ", ".join(state.EXTRA_NAMES[e] for e in d.get("extras", [])) or "нет"
@@ -80,8 +78,6 @@ def build_review_text(st: state.UserState) -> str:
 def share_url_for(vk_id: int) -> str:
     bot_link = f"https://vk.me/club{VK_GROUP_ID}"
     return f"https://vk.com/share.php?url={quote(bot_link)}&title={quote('Забронировали Деда Мороза!')}"
-
-# ================= ШАГИ =================
 
 async def step_city(message: Message, st: state.UserState):
     st.step = "city"
@@ -171,7 +167,6 @@ async def enter_operator(message: Message, st: state.UserState):
     await send_message(message, texts.OPERATOR_REQUESTED, keyboard=kb.kb_main())
     await notify_admin(texts.ADMIN_NEW_CLIENT.format(name=st.name or f"user_{st.vk_id}", vk_id=st.vk_id, snippet="Нажал «Живой человек»", funnel_stage=st.step))
 
-# ================= РОУТЕР =================
 @bot.on.message()
 async def router(message: Message):
     try:
@@ -183,7 +178,6 @@ async def router(message: Message):
         text_raw = (message.text or "").strip()
         cmd = parse_payload(message)
 
-        # Админ-команды
         if vk_id == ADMIN_VK_ID and text_raw.startswith("/"):
             if text_raw.startswith("/take "):
                 uid = int(text_raw.split()[1]); s = state.get_user(uid); s.operator_mode = True
@@ -273,6 +267,11 @@ async def router(message: Message):
 
 async def main():
     state.init_slots()
+    if sheets.is_enabled():
+        rows = await sheets.load_paid()
+        restored = state.mark_booked_from_sheets(rows)
+        logger.info(f"Восстановлено {restored} слотов")
+
     asyncio.create_task(state.cleanup_loop(60))
     logger.info("Бот запускается...")
     await bot.run_polling()
