@@ -96,7 +96,6 @@ async def step_package(message: Message, st: state.UserState):
     st.step = "package"
     audience = st.draft.get("audience", "mixed")
     
-    # ИСПРАВЛЕНИЕ: убираем префикс "aud_", чтобы передать чистое "adults" или "kids"
     if audience == "aud_adults":
         aud_type = "adults"
     elif audience == "aud_kids":
@@ -118,6 +117,25 @@ async def step_package(message: Message, st: state.UserState):
 async def step_extras(message: Message, st: state.UserState):
     st.step = "extras"
     await send_message(message, texts.ASK_EXTRAS, keyboard=kb.kb_extras(st.draft))
+
+async def step_dates(message: Message, st: state.UserState):
+    st.step = "date"
+    summary = state.get_dates_summary()
+    await send_message(message, texts.ASK_DATE, keyboard=kb.kb_dates(summary))
+
+async def step_times(message: Message, st: state.UserState, d: date):
+    st.draft["date"] = d.isoformat()
+    st.draft["date_display"] = d.strftime("%d.%m.%Y")
+    st.step = "time"
+    slots = state.get_free_slots_by_date(d)
+    if not any(s.status.value == "free" for s in slots):
+        await send_message(message, texts.NO_SLOTS_LEFT, keyboard=kb.kb_dates(state.get_dates_summary()))
+        return
+    await send_message(message, texts.ASK_TIME.format(date=d.strftime("%d.%m.%Y")), keyboard=kb.kb_times(slots))
+
+async def step_address(message: Message, st: state.UserState):
+    st.step = "address"
+    await send_message(message, texts.ASK_ADDRESS, keyboard=kb.kb_main())
 
 async def step_review(message: Message, st: state.UserState):
     st.step = "review"
@@ -204,11 +222,12 @@ async def router(message: Message):
             if st.step == "city":
                 st.draft["city"] = text_raw
                 await step_audience(message, st); return
+            if st.step == "address":
+                st.draft["address"] = text_raw
+                await step_review(message, st); return
 
         if text_raw.lower().startswith("/start"):
             await step_city(message, st); return
-        if cmd == "book": 
-            await step_city(message, st); return 
         if cmd == "operator":
             await enter_operator(message, st); return
         if cmd == "back_main":
@@ -243,7 +262,17 @@ async def router(message: Message):
             key = cmd.split("_", 1)[1]; chosen = set(st.draft.get("extras", []))
             chosen.symmetric_difference_update({key}); st.draft["extras"] = list(chosen)
             await send_message(message, "Отмечено.", keyboard=kb.kb_extras(st.draft)); return
-        if cmd == "extras_done": await step_review(message, st); return
+        if cmd == "extras_done": await step_dates(message, st); return
+
+        if cmd.startswith("date_"):
+            await step_times(message, st, date.fromisoformat(cmd[5:])); return
+        if cmd.startswith("slot_"):
+            slot_id = int(cmd[5:]); slots = state.get_free_slots_by_date(date.fromisoformat(st.draft["date"]))
+            slot = next((s for s in slots if s.id == slot_id), None)
+            if not slot or slot.status.value != "free":
+                await send_message(message, texts.SLOT_TAKEN, keyboard=kb.kb_times(slots)); return
+            st.draft["slot_id"] = slot_id; st.draft["time_display"] = slot.time.strftime("%H:%M")
+            await step_address(message, st); return
 
         if cmd == "review_ok":
             st.step = "consent"; await send_message(message, texts.CONSENT, keyboard=kb.kb_consent()); return
