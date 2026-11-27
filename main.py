@@ -109,9 +109,23 @@ async def ask_child_info(message: Message, st: state.UserState):
     st.step = "child_name"
     await send_thinking(message, texts.ASK_CHILD_INFO.format(child_num=child_num), keyboard=kb.kb_main())
 
+# ИСПРАВЛЕННАЯ ЛОГИКА: формируем подробный текст и прикрепляем кнопки
 async def step_package(message: Message, st: state.UserState):
     st.step = "package"
-    await send_thinking(message, texts.ASK_PACKAGE.format(audience=st.draft.get("audience", "")), keyboard=kb.kb_package(st.draft.get("audience", "mixed")))
+    audience = st.draft.get("audience", "mixed")
+    
+    # Собираем программы под аудиторию
+    suitable = {k: v for k, v in PROGRAMS.items() if (v["for"] == "kids" and audience in ["kids", "mixed"]) or (v["for"] == "adults" and audience in ["adults", "mixed"])}
+    
+    # Формируем подробный список
+    program_list = ""
+    for key, p in suitable.items():
+        program_list += f"🎁 {p['title']} — {p['price']} ₽\n"
+        program_list += f"⏱ {p['duration']} · {p['desc']}\n"
+        program_list += f"👥 {p['details']}\n\n"
+    
+    text = texts.ASK_PACKAGE_DETAILS.format(program_list=program_list.strip())
+    await send_thinking(message, text, keyboard=kb.kb_package(audience))
 
 async def step_extras(message: Message, st: state.UserState):
     st.step = "extras"
