@@ -96,7 +96,15 @@ async def step_package(message: Message, st: state.UserState):
     st.step = "package"
     audience = st.draft.get("audience", "mixed")
     
-    suitable = {k: v for k, v in PROGRAMS.items() if (v["for"] == "kids" and audience in ["kids", "mixed"]) or (v["for"] == "adults" and audience in ["adults", "mixed"])}
+    # ИСПРАВЛЕНИЕ: правильно извлекаем тип аудитории для фильтрации
+    if audience == "aud_adults":
+        aud_type = "adults"
+    elif audience == "aud_kids":
+        aud_type = "kids"
+    else:
+        aud_type = "mixed"
+    
+    suitable = {k: v for k, v in PROGRAMS.items() if (v["for"] == "kids" and aud_type in ["kids", "mixed"]) or (v["for"] == "adults" and aud_type in ["adults", "mixed"])}
     
     program_list = ""
     for key, p in suitable.items():
@@ -105,7 +113,7 @@ async def step_package(message: Message, st: state.UserState):
         program_list += f"👥 {p['details']}\n\n"
     
     text = texts.ASK_PACKAGE_DETAILS.format(program_list=program_list.strip())
-    await send_message(message, text, keyboard=kb.kb_package(audience))
+    await send_message(message, text, keyboard=kb.kb_package(aud_type))
 
 async def step_extras(message: Message, st: state.UserState):
     st.step = "extras"
@@ -192,13 +200,11 @@ async def router(message: Message):
         if st.operator_mode:
             await notify_admin(f"💬 {st.name} ({vk_id}):\n{text_raw[:500]}"); return
 
-        # Ввод текста (если не кнопка)
         if not cmd and text_raw:
             if st.step == "city":
                 st.draft["city"] = text_raw
                 await step_audience(message, st); return
 
-        # Кнопки
         if text_raw.lower().startswith("/start"):
             await step_city(message, st); return
         if cmd == "book": 
@@ -208,13 +214,11 @@ async def router(message: Message):
         if cmd == "back_main":
             await step_city(message, st); return
 
-        # 1. Города
         if cmd.startswith("city_"):
             city_map = {"city_ekb": "Екатеринбург", "city_tmn": "Тюмень", "city_krg": "Курган"}
             st.draft["city"] = city_map.get(cmd, "Город")
             await step_audience(message, st); return
 
-        # 2. Аудитория
         if cmd in ("aud_kids", "aud_adults", "aud_mixed"):
             st.draft["audience"] = cmd
             if cmd == "aud_adults":
@@ -224,27 +228,23 @@ async def router(message: Message):
                 await step_children_count(message, st)
             return
 
-        # 3. Кол-во детей
         if cmd.startswith("children_"):
             count = 4 if cmd.split("_")[1] == "4" else int(cmd.split("_")[1])
             st.draft["target_children_count"] = count
             st.draft["current_child_idx"] = 0
             await step_package(message, st); return
 
-        # 4. Программа
         if cmd.startswith("pkg_"):
             st.draft["package"] = cmd.replace("pkg_", "")
             st.draft["extras"] = []
             await step_extras(message, st); return
 
-        # 5. Допы
         if cmd in ("extra_photo", "extra_bubbles", "extra_snow", "extra_gifts"):
             key = cmd.split("_", 1)[1]; chosen = set(st.draft.get("extras", []))
             chosen.symmetric_difference_update({key}); st.draft["extras"] = list(chosen)
             await send_message(message, "Отмечено.", keyboard=kb.kb_extras(st.draft)); return
         if cmd == "extras_done": await step_review(message, st); return
 
-        # 6. Подтверждение
         if cmd == "review_ok":
             st.step = "consent"; await send_message(message, texts.CONSENT, keyboard=kb.kb_consent()); return
         if cmd == "review_edit": await step_city(message, st); return
@@ -252,7 +252,6 @@ async def router(message: Message):
             if st.draft.get("booking_id"): await state.release_slot(uuid.UUID(st.draft["booking_id"]))
             await send_message(message, texts.CANCEL.format(name=st.name), keyboard=kb.kb_welcome()); st.draft = {}; st.step = "main"; return
 
-        # 7. Оплата
         if cmd == "consent_yes": await step_payment(message, st); return
         if cmd == "pay_now":
             await send_message(message, "✅ Оплата получена")
