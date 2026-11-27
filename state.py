@@ -25,6 +25,8 @@ class Booking:
     id: uuid.UUID
     vk_id: int
     slot_id: Optional[int]
+    city: str = ""
+    audience: str = ""
     package: str = ""
     extras: list = field(default_factory=list)
     children: list = field(default_factory=list)
@@ -41,6 +43,7 @@ class UserState:
     operator_mode: bool = False
     name: str = ""
     ai_history: list = field(default_factory=list)
+    last_activity: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 _lock = asyncio.Lock()
 _users: dict[int, UserState] = {}
@@ -48,10 +51,8 @@ _slots: dict[int, Slot] = {}
 _bookings: dict[uuid.UUID, Booking] = {}
 _next_slot_id = 1
 
-PACKAGE_PRICES = {"mini": Decimal("3500"), "standard": Decimal("5500"), "premium": Decimal("8500")}
-PACKAGE_NAMES = {"mini": "Мини", "standard": "Стандарт", "premium": "Премиум"}
-EXTRA_PRICES = {"photo": Decimal("2000"), "cake": Decimal("1500"), "balls": Decimal("800")}
-EXTRA_NAMES = {"photo": "Фотограф", "cake": "Торт", "balls": "Шары"}
+EXTRA_PRICES = {"photo": Decimal("3500"), "bubbles": Decimal("2000"), "snow": Decimal("2500"), "gifts": Decimal("500")}
+EXTRA_NAMES = {"photo": "Фотограф", "bubbles": "Мыльные пузыри", "snow": "Снежное шоу", "gifts": "Именные подарки"}
 
 def init_slots(days_ahead: int = 14) -> None:
     global _next_slot_id
@@ -67,7 +68,6 @@ def mark_booked_from_sheets(rows: list[dict]) -> int:
     restored = 0
     for row in rows:
         try:
-            # Ожидаем формат даты ДД.ММ.ГГГГ из таблицы
             d = datetime.strptime(row["Дата"], "%d.%m.%Y").date()
             hh, mm = row["Время"].split(":")
             t = time(int(hh), int(mm))
@@ -140,15 +140,19 @@ def create_booking(vk_id: int, draft: dict) -> Booking:
     total = calc_total(draft)
     b = Booking(
         id=uuid.uuid4(), vk_id=vk_id, slot_id=draft.get("slot_id"),
-        package=draft.get("package", ""), extras=list(draft.get("extras", [])),
-        children=list(draft.get("children", [])), address=draft.get("address", ""),
-        phone=draft.get("phone", ""), total=total,
+        city=draft.get("city", ""), audience=draft.get("audience", ""),
+        package=draft.get("package", ""),
+        extras=list(draft.get("extras", [])), children=list(draft.get("children", [])),
+        address=draft.get("address", ""), phone=draft.get("phone", ""),
+        total=total,
     )
     _bookings[b.id] = b
     return b
 
 def calc_total(draft: dict) -> Decimal:
-    total = PACKAGE_PRICES.get(draft.get("package", ""), Decimal("0"))
+    from programs import PROGRAMS
+    pkg_key = draft.get("package", "")
+    total = Decimal(str(PROGRAMS.get(pkg_key, {}).get("price", 0)))
     for e in draft.get("extras", []):
         total += EXTRA_PRICES.get(e, Decimal("0"))
     return total
