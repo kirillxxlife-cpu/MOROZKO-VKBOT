@@ -96,7 +96,7 @@ async def step_package(message: Message, st: state.UserState):
     st.step = "package"
     audience = st.draft.get("audience", "mixed")
     
-    # ИСПРАВЛЕНИЕ: правильно извлекаем тип аудитории для фильтрации
+    # ИСПРАВЛЕНИЕ: убираем префикс "aud_", чтобы передать чистое "adults" или "kids"
     if audience == "aud_adults":
         aud_type = "adults"
     elif audience == "aud_kids":
