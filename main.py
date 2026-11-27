@@ -3,7 +3,7 @@ import json
 import os
 import re
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from urllib.parse import quote
 
 from loguru import logger
@@ -30,11 +30,12 @@ bot.labeler.vbml_ignore_case = True
 
 PDF_GUIDE_URL = "https://disk.yandex.ru/i/skazka_guide_pdf"
 
+# --- Только отправка, без сложных разбивок ---
 async def send_message(message: Message, text: str, keyboard: str = None):
     if not text: return
     try:
         await bot.api.messages.set_activity(type='typing', peer_id=message.peer_id)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.4)
         await message.answer(text, keyboard=keyboard)
     except Exception as e:
         logger.error(f"Ошибка отправки: {e}")
@@ -61,19 +62,17 @@ async def notify_admin(text: str) -> None:
     except Exception as e:
         logger.error("admin notify: {}", e)
 
+# --- Сборка карточки ---
 def build_review_text(st: state.UserState) -> str:
     d = st.draft
     extras = ", ".join(state.EXTRA_NAMES[e] for e in d.get("extras", [])) or "нет"
-    children_str = ", ".join(d.get("children", [])) or "нет"
     pkg_name = PROGRAMS.get(d.get("package", ""), {}).get("title", "")
     total = state.calc_total(d)
     lines = [
         f"🏙 Город: {d.get('city', '')}",
-        f"🎯 Для кого: {d.get('audience', '').replace('aud_', '')}",
-        f"👦 Дети: {children_str}",
-        f"📅 {d.get('date_display', '')} в {d.get('time_display', '')}",
+        f"🎯 Формат: {d.get('audience', '').replace('aud_', '')}",
         f"🎁 Программа: {pkg_name}",
-        f"➕ Допы: {extras}", f"📍 {d.get('address', '')}", f"📞 {d.get('phone', '')}",
+        f"➕ Допы: {extras}",
         f"💰 Итого: {int(total)} ₽"
     ]
     return "\n".join(lines)
@@ -82,10 +81,12 @@ def share_url_for(vk_id: int) -> str:
     bot_link = f"https://vk.me/club{VK_GROUP_ID}"
     return f"https://vk.com/share.php?url={quote(bot_link)}&title={quote('Забронировали Деда Мороза!')}"
 
-async def step_welcome(message: Message, st: state.UserState):
+# ================= ШАГИ =================
+
+async def step_city(message: Message, st: state.UserState):
     st.step = "city"
     st.draft = {}
-    await send_message(message, texts.WELCOME.format(name=st.name), keyboard=kb.kb_main())
+    await send_message(message, texts.WELCOME.format(name=st.name), keyboard=kb.kb_cities())
 
 async def step_audience(message: Message, st: state.UserState):
     st.step = "audience"
@@ -93,15 +94,7 @@ async def step_audience(message: Message, st: state.UserState):
 
 async def step_children_count(message: Message, st: state.UserState):
     st.step = "children_count"
-    st.draft["children"] = []
-    st.draft["current_child_idx"] = 0
     await send_message(message, texts.ASK_CHILDREN_COUNT, keyboard=kb.kb_children_count())
-
-async def ask_child_info(message: Message, st: state.UserState):
-    idx = st.draft.get("current_child_idx", 0)
-    child_num = ["первого", "второго", "третьего", "четвёртого"][idx] if idx < 4 else f"{idx+1}-го"
-    st.step = "child_name"
-    await send_message(message, texts.ASK_CHILD_INFO.format(child_num=child_num), keyboard=kb.kb_main())
 
 async def step_package(message: Message, st: state.UserState):
     st.step = "package"
@@ -122,29 +115,6 @@ async def step_extras(message: Message, st: state.UserState):
     st.step = "extras"
     await send_message(message, texts.ASK_EXTRAS, keyboard=kb.kb_extras(st.draft))
 
-async def step_dates(message: Message, st: state.UserState):
-    st.step = "date"
-    summary = state.get_dates_summary()
-    await send_message(message, texts.ASK_DATE, keyboard=kb.kb_dates(summary))
-
-async def step_times(message: Message, st: state.UserState, d: date):
-    st.draft["date"] = d.isoformat()
-    st.draft["date_display"] = d.strftime("%d.%m.%Y")
-    st.step = "time"
-    slots = state.get_free_slots_by_date(d)
-    if not any(s.status.value == "free" for s in slots):
-        await send_message(message, texts.NO_SLOTS_LEFT, keyboard=kb.kb_dates(state.get_dates_summary()))
-        return
-    await send_message(message, texts.ASK_TIME.format(date=d.strftime("%d.%m.%Y")), keyboard=kb.kb_times(slots))
-
-async def step_address(message: Message, st: state.UserState):
-    st.step = "address"
-    await send_message(message, texts.ASK_ADDRESS, keyboard=kb.kb_main())
-
-async def step_phone(message: Message, st: state.UserState):
-    st.step = "phone"
-    await send_message(message, texts.ASK_PHONE, keyboard=kb.kb_main())
-
 async def step_review(message: Message, st: state.UserState):
     st.step = "review"
     header = texts.REVIEW_HEADER.format(name=st.name)
@@ -152,6 +122,7 @@ async def step_review(message: Message, st: state.UserState):
     await send_message(message, full_text, keyboard=kb.kb_review())
 
 async def step_payment(message: Message, st: state.UserState):
+    st.step = "payment"
     booking = state.create_booking(message.from_id, st.draft)
     slot = await state.hold_slot(booking.slot_id, booking.id, HOLD_MIN)
     if not slot:
@@ -159,7 +130,6 @@ async def step_payment(message: Message, st: state.UserState):
         st.step = "main"
         return
     st.draft["booking_id"] = str(booking.id)
-    st.step = "payment"
     await send_message(message, texts.PAYMENT_SCREEN, keyboard=kb.kb_payment())
 
 async def step_confirm_payment(message: Message, st: state.UserState):
@@ -201,6 +171,7 @@ async def enter_operator(message: Message, st: state.UserState):
     await send_message(message, texts.OPERATOR_REQUESTED, keyboard=kb.kb_main())
     await notify_admin(texts.ADMIN_NEW_CLIENT.format(name=st.name or f"user_{st.vk_id}", vk_id=st.vk_id, snippet="Нажал «Живой человек»", funnel_stage=st.step))
 
+# ================= РОУТЕР =================
 @bot.on.message()
 async def router(message: Message):
     try:
@@ -208,11 +179,11 @@ async def router(message: Message):
         st = state.get_user(vk_id)
         if not st.name:
             st.name = await safe_name(message)
-        st.last_activity = datetime.now()
 
         text_raw = (message.text or "").strip()
         cmd = parse_payload(message)
 
+        # Админ-команды
         if vk_id == ADMIN_VK_ID and text_raw.startswith("/"):
             if text_raw.startswith("/take "):
                 uid = int(text_raw.split()[1]); s = state.get_user(uid); s.operator_mode = True
@@ -227,41 +198,29 @@ async def router(message: Message):
         if st.operator_mode:
             await notify_admin(f"💬 {st.name} ({vk_id}):\n{text_raw[:500]}"); return
 
+        # Ввод текста (если не кнопка)
         if not cmd and text_raw:
             if st.step == "city":
                 st.draft["city"] = text_raw
                 await step_audience(message, st); return
-            if st.step == "child_name":
-                st.draft["children"].append(text_raw)
-                st.draft["current_child_idx"] += 1
-                if st.draft["current_child_idx"] < st.draft.get("target_children_count", 1):
-                    await ask_child_info(message, st)
-                else:
-                    await step_package(message, st)
-                return
-            if st.step == "address":
-                st.draft["address"] = text_raw
-                await step_phone(message, st); return
-            if st.step == "phone":
-                digits = re.sub(r"\D", "", text_raw)
-                if len(digits) < 10:
-                    await send_message(message, texts.BAD_PHONE, keyboard=kb.kb_main()); return
-                st.draft["phone"] = text_raw
-                await step_review(message, st); return
 
+        # Кнопки
         if text_raw.lower().startswith("/start"):
-            await step_welcome(message, st); return
+            await step_city(message, st); return
         if cmd == "book": 
-            await step_welcome(message, st); return 
-        if cmd == "free_dates":
-            st.step = "free_dates"
-            summary = state.get_dates_summary()
-            await send_message(message, texts.FREE_DATES_HEADER, keyboard=kb.kb_free_dates(summary)); return
+            await step_city(message, st); return 
         if cmd == "operator":
             await enter_operator(message, st); return
         if cmd == "back_main":
-            await step_welcome(message, st); return
+            await step_city(message, st); return
 
+        # 1. Города
+        if cmd.startswith("city_"):
+            city_map = {"city_ekb": "Екатеринбург", "city_tmn": "Тюмень", "city_krg": "Курган"}
+            st.draft["city"] = city_map.get(cmd, "Город")
+            await step_audience(message, st); return
+
+        # 2. Аудитория
         if cmd in ("aud_kids", "aud_adults", "aud_mixed"):
             st.draft["audience"] = cmd
             if cmd == "aud_adults":
@@ -271,56 +230,40 @@ async def router(message: Message):
                 await step_children_count(message, st)
             return
 
+        # 3. Кол-во детей
         if cmd.startswith("children_"):
             count = 4 if cmd.split("_")[1] == "4" else int(cmd.split("_")[1])
             st.draft["target_children_count"] = count
             st.draft["current_child_idx"] = 0
-            await ask_child_info(message, st); return
+            await step_package(message, st); return
+
+        # 4. Программа
         if cmd.startswith("pkg_"):
             st.draft["package"] = cmd.replace("pkg_", "")
             st.draft["extras"] = []
             await step_extras(message, st); return
+
+        # 5. Допы
         if cmd in ("extra_photo", "extra_bubbles", "extra_snow", "extra_gifts"):
             key = cmd.split("_", 1)[1]; chosen = set(st.draft.get("extras", []))
             chosen.symmetric_difference_update({key}); st.draft["extras"] = list(chosen)
             await send_message(message, "Отмечено.", keyboard=kb.kb_extras(st.draft)); return
-        if cmd == "extras_done": await step_dates(message, st); return
-        if cmd.startswith("date_"):
-            await step_times(message, st, date.fromisoformat(cmd[5:])); return
-        if cmd.startswith("slot_"):
-            slot_id = int(cmd[5:]); slots = state.get_free_slots_by_date(date.fromisoformat(st.draft["date"]))
-            slot = next((s for s in slots if s.id == slot_id), None)
-            if not slot or slot.status.value != "free":
-                await send_message(message, texts.SLOT_TAKEN, keyboard=kb.kb_times(slots)); return
-            st.draft["slot_id"] = slot_id; st.draft["time_display"] = slot.time.strftime("%H:%M")
-            await step_address(message, st); return
+        if cmd == "extras_done": await step_review(message, st); return
 
+        # 6. Подтверждение
         if cmd == "review_ok":
             st.step = "consent"; await send_message(message, texts.CONSENT, keyboard=kb.kb_consent()); return
-        if cmd == "review_edit": await step_welcome(message, st); return
-        if cmd == "review_back": await step_review(message, st); return
+        if cmd == "review_edit": await step_city(message, st); return
+        if cmd == "cancel":
+            if st.draft.get("booking_id"): await state.release_slot(uuid.UUID(st.draft["booking_id"]))
+            await send_message(message, texts.CANCEL.format(name=st.name), keyboard=kb.kb_welcome()); st.draft = {}; st.step = "main"; return
+
+        # 7. Оплата
         if cmd == "consent_yes": await step_payment(message, st); return
         if cmd == "pay_now":
             await send_message(message, "✅ Оплата получена")
             await asyncio.sleep(0.4)
             await step_confirm_payment(message, st); return
-        if cmd == "cancel":
-            if st.draft.get("booking_id"): await state.release_slot(uuid.UUID(st.draft["booking_id"]))
-            await send_message(message, texts.CANCEL.format(name=st.name), keyboard=kb.kb_welcome()); st.draft = {}; st.step = "main"; return
-        if cmd == "noop": await send_message(message, texts.NOOP, keyboard=kb.kb_main()); return
-
-        if not cmd and text_raw:
-            ai_response = await ai.get_ai_response(text_raw, st.ai_history, st.name, st.step)
-
-            if "[ПЕРЕДАТЬ_ОПЕРАТОРУ]" in ai_response:
-                clean_response = ai_response.replace("[ПЕРЕДАТЬ_ОПЕРАТОРУ]", "").strip()
-                await send_message(message, clean_response, keyboard=kb.kb_main())
-                await notify_admin(f"🚨 Требуется оператор!\n👤 {st.name} (vk.com/id{st.vk_id})\n💬 {text_raw[:200]}...")
-                st.operator_mode = True; return
-
-            st.ai_history.extend([{"role": "user", "text": text_raw}, {"role": "assistant", "text": ai_response}])
-            st.ai_history = st.ai_history[-10:]
-            await send_message(message, ai_response, keyboard=kb.kb_main()); return
 
         await send_message(message, "Пожалуйста, выберите вариант на клавиатуре ниже 👇", keyboard=kb.kb_main())
 
@@ -330,11 +273,6 @@ async def router(message: Message):
 
 async def main():
     state.init_slots()
-    if sheets.is_enabled():
-        rows = await sheets.load_paid()
-        restored = state.mark_booked_from_sheets(rows)
-        logger.info(f"Восстановлено {restored} слотов")
-
     asyncio.create_task(state.cleanup_loop(60))
     logger.info("Бот запускается...")
     await bot.run_polling()
