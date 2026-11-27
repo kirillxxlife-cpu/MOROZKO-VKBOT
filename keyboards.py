@@ -40,7 +40,6 @@ def kb_children_count() -> str:
 
 def kb_package(audience: str) -> str:
     kb = Keyboard(one_time=False, inline=False)
-    # Фильтруем по аудитории
     suitable = {k: v for k, v in PROGRAMS.items() if (v["for"] == "kids" and audience in ["kids", "mixed"]) or (v["for"] == "adults" and audience in ["adults", "mixed"])}
     for key, p in suitable.items():
         label = f"{p['title']} — {p['price']} ₽"
