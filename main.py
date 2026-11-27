@@ -222,7 +222,6 @@ async def router(message: Message):
         if st.operator_mode:
             await notify_admin(f"💬 {st.name} ({vk_id}):\n{text_raw[:500]}"); return
 
-        # --- Ввод текста (город / имя ребенка / адрес / телефон) ---
         if not cmd and text_raw:
             if st.step == "city":
                 st.draft["city"] = text_raw
@@ -245,7 +244,6 @@ async def router(message: Message):
                 st.draft["phone"] = text_raw
                 await step_review(message, st); return
 
-        # --- Кнопки ---
         if text_raw.lower().startswith("/start"):
             await step_welcome(message, st); return
         if cmd == "book": 
@@ -259,7 +257,6 @@ async def router(message: Message):
         if cmd == "back_main":
             await step_welcome(message, st); return
 
-        # Шаг "Аудитория"
         if cmd in ("aud_kids", "aud_adults", "aud_mixed"):
             st.draft["audience"] = cmd
             if cmd == "aud_adults":
@@ -307,7 +304,6 @@ async def router(message: Message):
             await send_thinking(message, texts.CANCEL.format(name=st.name), keyboard=kb.kb_welcome()); st.draft = {}; st.step = "main"; return
         if cmd == "noop": await send_thinking(message, texts.NOOP, keyboard=kb.kb_main()); return
 
-        # --- AI ---
         if not cmd and text_raw:
             ai_response = await ai.get_ai_response(text_raw, st.ai_history, st.name, st.step)
 
