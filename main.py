@@ -30,7 +30,6 @@ bot.labeler.vbml_ignore_case = True
 
 PDF_GUIDE_URL = "https://disk.yandex.ru/i/skazka_guide_pdf"
 
-# --- Упрощенная отправка (только 1 сообщение, всегда с клавиатурой) ---
 async def send_message(message: Message, text: str, keyboard: str = None):
     if not text: return
     try:
